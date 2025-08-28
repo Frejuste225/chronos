@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  # Base de données MySQL
+  mysql:
+    image: mysql:8.0
+    container_name: chronos_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: ghs_db
+      MYSQL_USER: chronos_user
+      MYSQL_PASSWORD: chronos_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./ghs.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - chronos_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # Backend FastAPI
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: chronos_backend
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=mysql+pymysql://chronos_user:chronos_password@mysql:3306/ghs_db
+      - SECRET_KEY=your-super-secret-key-change-this-in-production
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - BACKEND_CORS_ORIGINS=["http://localhost:3000", "http://localhost:5173"]
+    ports:
+      - "8000:8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - chronos_network
+    volumes:
+      - ./backend:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Frontend React
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: chronos_frontend
+    restart: unless-stopped
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_ENVIRONMENT=development
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - chronos_network
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm start
+
+volumes:
+  mysql_data:
+    driver: local
+
+networks:
+  chronos_network:
+    driver: bridge
